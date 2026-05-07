@@ -3,7 +3,7 @@ import secrets
 
 from fastapi import Depends, HTTPException, Header
 
-from app.db.database import get_connection
+from app.db.database import get_connection, touch_api_key
 
 
 def hash_api_key(api_key: str) -> str:
@@ -46,5 +46,8 @@ def verify_api_key(authorization: str = Header(None)) -> int:
     
     if revoked:
         raise HTTPException(status_code=403, detail="API key has been revoked")
-    
+
+    # Record that this key was just used
+    touch_api_key(api_key_id)
+
     return api_key_id
