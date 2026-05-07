@@ -1,31 +1,27 @@
-# 🖤 BlackBox - Local LLM API Server
+# BlackBox - Local LLM API Server
 
 > *Because clouds are overrated*
 
-A self-hosted, production-ready(under construction) LLM inference server that exposes a clean REST API for local language models. Built with FastAPI and Ollama, providing OpenAI-style endpoints without the costs, rate limits, or vendor lock-in.
+A self-hosted LLM inference server that acts as a **drop-in replacement for the OpenAI API**. Point any OpenAI-compatible client at it, paste your BlackBox API key, and it just works — privately, locally, for free.
 
-## 🎯 Features
+Built with FastAPI + Ollama + SQLite.
 
-- **🔐 API Key Authentication**: Secure access with Bearer token authentication and SHA-256 hashed keys
-- **📊 Usage Tracking**: Automatic logging of requests, token usage, and latency metrics
-- **⚡ Fast Inference**: Powered by Ollama for efficient local model execution
-- **🛡️ Error Handling**: Graceful handling of connection failures, missing models, and rate limiting
-- **💾 SQLite Database**: Lightweight data persistence for API keys and request logs
-- **🚀 Auto-provisioning**: Generates admin API key on first startup
-- **📈 Performance Metrics**: Tracks latency and token counts per request
+---
 
-## 📋 Prerequisites
+## Prerequisites
 
 - Python 3.10+
-- [Ollama](https://ollama.ai) installed and running on `http://localhost:11434`
-- At least one Ollama model pulled (e.g., `ollama pull llama2`)
+- [Ollama](https://ollama.ai) installed and running
+- At least one model pulled: `ollama pull llama3`
 
-## 🚀 Quick Start
+---
 
-### 1. Install Dependencies
+## Quick Start
+
+### 1. Install dependencies
 
 ```bash
-pip install fastapi uvicorn httpx pydantic-settings
+pip install -r requirements.txt
 ```
 
 ### 2. Start Ollama
@@ -34,185 +30,169 @@ pip install fastapi uvicorn httpx pydantic-settings
 ollama serve
 ```
 
-### 3. Run the Server
+### 3. (Optional) Configure via .env
 
 ```bash
-cd app
-uvicorn main:app --reload
+cp .env.example .env
+# edit .env if your Ollama runs somewhere other than localhost:11434
 ```
 
-On first startup, an admin API key will be generated and displayed in the console. **Save this key** - it won't be shown again!
+### 4. Run the server
+
+```bash
+uvicorn app.main:app --reload
+```
+
+On first startup the server creates an admin API key and prints it **once**:
 
 ```
 ============================================================
 ADMIN API KEY (save this, it will not be shown again):
-YOUR-GENERATED-API-KEY-HERE
+YOUR-KEY-HERE
 ============================================================
 ```
 
-### 4. Make Your First Request
+Save it. You'll use it as your `Authorization: Bearer <key>` header, and to create additional keys.
 
+---
+
+## Using with OpenAI clients
+
+Any library that lets you set a custom `base_url` will work with zero other changes.
+
+**Python (openai SDK):**
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8000",   # point at BlackBox
+    api_key="YOUR-BLACKBOX-API-KEY",
+)
+
+response = client.chat.completions.create(
+    model="llama3",       # any model you have pulled in Ollama
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(response.choices[0].message.content)
+```
+
+**curl:**
 ```bash
-curl -X POST http://localhost:8000/generate \
-  -H "Authorization: Bearer YOUR-API-KEY" \
+curl http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer YOUR-KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "llama2",
-    "prompt": "Explain quantum computing in simple terms",
-    "temperature": 0.7,
-    "max_tokens": 200
+    "model": "llama3",
+    "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
 
-## 📡 API Endpoints
+---
 
-### `POST /generate`
+## API Endpoints
 
-Generate text completion from a prompt.
+### OpenAI-compatible (use these with existing clients)
 
-**Request Body:**
-```json
-{
-  "model": "llama2",
-  "prompt": "Your prompt here",
-  "temperature": 0.7,
-  "max_tokens": 500
-}
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/chat/completions` | Chat endpoint — accepts `messages[]` |
+| `POST` | `/v1/completions` | Legacy completion — accepts a `prompt` string |
+| `GET` | `/v1/models` | List models available in Ollama |
+
+### Key management
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/keys` | Create a new API key |
+| `GET` | `/v1/keys` | List all keys (metadata only, no raw keys) |
+| `DELETE` | `/v1/keys/{id}` | Revoke a key by ID |
+
+**Create a key:**
+```bash
+curl -X POST http://localhost:8000/v1/keys \
+  -H "Authorization: Bearer YOUR-ADMIN-KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-laptop"}'
+```
+Returns the raw key once — store it, it's not shown again.
+
+### Observability
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/usage` | Query request logs with optional filters |
+| `GET` | `/health` | Server + Ollama reachability check |
+
+**Usage filters** (all optional query params):
+- `api_key_id` — filter by key ID
+- `model` — filter by model name
+- `date_from` / `date_to` — ISO date strings, e.g. `2026-05-01`
+- `limit` — max rows (default 100, max 1000)
+
+```bash
+curl "http://localhost:8000/v1/usage?model=llama3&limit=20" \
+  -H "Authorization: Bearer YOUR-KEY"
 ```
 
-**Response:**
-```json
-{
-  "output": "Generated text...",
-  "tokens_used": 150,
-  "latency_ms": 1234
-}
-```
+### Legacy (original endpoint)
 
-**Authentication:** Required via `Authorization: Bearer <your-api-key>` header
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/generate` | Direct prompt → text (non-OpenAI shape) |
 
-### `GET /health`
+---
 
-Health check endpoint.
+## Configuration
 
-**Response:**
-```json
-{
-  "status": "ok"
-}
-```
+Copy `.env.example` to `.env` and set any of these:
 
-## 🏗️ Architecture
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Where Ollama is running |
+| `OLLAMA_TIMEOUT` | `120.0` | Seconds to wait for a generation response |
+| `ENV` | `dev` | Environment name |
 
-```
-┌─────────────────────┐
-│  Client Application │
-└──────────┬──────────┘
-           │ REST/JSON
-           ▼
-┌─────────────────────┐
-│   FastAPI Server    │
-│  ┌───────────────┐  │
-│  │ Auth Layer    │  │
-│  ├───────────────┤  │
-│  │ Request Log   │  │
-│  ├───────────────┤  │
-│  │ API Routes    │  │
-│  └───────────────┘  │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│  Ollama Runtime     │
-│  (Local Models)     │
-└─────────────────────┘
-```
+---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 blackbox/
 ├── app/
-│   ├── main.py              # FastAPI application entry point
+│   ├── main.py                  # FastAPI app, startup, exception handlers
 │   ├── api/
-│   │   └── generate.py      # Text generation endpoint
+│   │   ├── generate.py          # Legacy /generate endpoint
+│   │   └── v1/
+│   │       ├── chat.py          # POST /v1/chat/completions
+│   │       ├── completions.py   # POST /v1/completions
+│   │       ├── models.py        # GET  /v1/models
+│   │       ├── keys.py          # Key management CRUD
+│   │       └── usage.py         # GET  /v1/usage
 │   ├── core/
-│   │   ├── auth.py          # API key authentication
-│   │   ├── config.py        # Configuration settings
-│   │   └── exceptions.py    # Custom exceptions
+│   │   ├── auth.py              # Bearer token verification
+│   │   ├── config.py            # Settings (env vars, .env file)
+│   │   └── exceptions.py        # Custom exceptions
 │   ├── db/
-│   │   └── database.py      # SQLite database operations
+│   │   └── database.py          # SQLite schema + all queries
 │   └── services/
-│       └── ollama_client.py # Ollama API client
-├── blackbox.db              # SQLite database (created on first run)
-├── prd.txt                  # Product Requirements Document
-└── README.md
+│       └── ollama_client.py     # Async Ollama HTTP client
+├── .env.example                 # Config template
+├── requirements.txt
+└── blackbox.db                  # Created on first run
 ```
-
-## 🔧 Configuration
-
-Configuration is managed via environment variables in [app/core/config.py](app/core/config.py):
-
-- `APP_NAME`: Application name (default: "Local LLM API")
-- `ENV`: Environment (default: "dev")
-- `OLLAMA_BASE_URL`: Ollama API endpoint (default: "http://localhost:11434")
-
-## 💾 Database Schema
-
-### `api_keys` Table
-- `id`: Primary key
-- `key_hash`: SHA-256 hash of the API key
-- `name`: Human-readable name
-- `created_at`: ISO 8601 timestamp
-- `revoked`: Boolean flag for key revocation
-
-### `requests` Table
-- `id`: Primary key
-- `api_key_id`: Foreign key to api_keys
-- `endpoint`: API endpoint called
-- `model`: Model name used
-- `tokens_used`: Token count (nullable)
-- `latency_ms`: Request latency in milliseconds
-- `timestamp`: ISO 8601 timestamp
-
-## 🛡️ Security Features
-
-- **Hashed API Keys**: Keys are stored as SHA-256 hashes, never in plaintext
-- **Bearer Token Auth**: Industry-standard authentication header
-- **Key Revocation**: API keys can be marked as revoked
-- **Request Validation**: Pydantic models for input validation
-
-## 🎯 Use Cases
-
-- Local AI development without API costs
-- Privacy-focused LLM applications
-- Offline AI inference
-- AI backend for multiple projects
-- Prototyping and experimentation
-- Internal tooling and automation
-
-## 🚨 Error Codes
-
-- `401`: Missing or invalid API key
-- `403`: Revoked API key
-- `400`: Model not found
-- `503`: Ollama service unavailable
-- `500`: Internal server error
-
-## 🤝 Contributing
-
-This is a production-ready local LLM server designed for simplicity and reliability. Contributions are welcome!
-
-## 📄 License
-
-Open source - use it, modify it, deploy it however you like.
-
-## 🙏 Acknowledgments
-
-- Built with [FastAPI](https://fastapi.tiangolo.com/)
-- Powered by [Ollama](https://ollama.ai)
-- Inspired by the need for local-first AI infrastructure
 
 ---
 
-**Made with 🖤 for developers who prefer local over cloud**
+## Error codes
+
+| Code | Meaning |
+|------|---------|
+| `401` | Missing or invalid API key |
+| `403` | Key has been revoked |
+| `400` | Bad request (model not found, invalid input) |
+| `503` | Ollama is unreachable |
+| `500` | Internal server error |
+
+---
+
+**Made with for developers who prefer local over cloud**
