@@ -52,5 +52,3 @@ async def generate(request: GenerateRequest, api_key_id: int = Depends(verify_ap
     )
     
     return response
-    
-    return response

@@ -1,0 +1,6 @@
+fastapi
+uvicorn          # ASGI server to run the FastAPI app
+httpx            # async HTTP client for Ollama requests
+pydantic
+pydantic-settings
+# sqlite3 removed — it's Python stdlib, not a pip package
